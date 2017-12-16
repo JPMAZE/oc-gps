@@ -1,11 +1,12 @@
+local gps = {}
 
 local component = require("component")
 local modem = component.modem
 local vector = require("vector")
 local os = require("os")
 local event = require("event")
+local serialization = require("serialization")
 
-local gps = {}
 local CHANNEL_GPS = 65534
 
 local function trilaterate( A, B, C )
@@ -88,20 +89,19 @@ function gps.locate( _nTimeout, _bDebug )
 		modem.open(CHANNEL_GPS)
 		bCloseChannel = true
 	end
-
 	-- Send a ping to listening GPS hosts
 	modem.broadcast( CHANNEL_GPS, "PING" )
-		
 	-- Wait for the responses
 	local tFixes = {}
 	local pos1, pos2 = nil, nil
-	local timeout = os.sleep( _nTimeout or 2 )
+	local timeout = _nTimeout or 2
 	while true do
-		local e, modemID, _, port, nDistance, tMessage = event.pull("modem_message")
-		if e == "modem_message" then
+		local e, modemID, _, port, nDistance, tMessage = event.pull(timeout, "modem_message")
+		tMessage = serialization.unserialize(tMessage)
+		if e == "modem_message"  then
 			-- We received a reply from a modem
-			local sSide, sChannel, sReplyChannel, tMessage, nDistance = p1, p2, p3, p4, p5
 			if modemID == modem.address and port == CHANNEL_GPS and nDistance then
+				print(nDistance)
 				-- Received the correct message from the correct modem: use it to determine position
 				if type(tMessage) == "table" and #tMessage == 3 and tonumber(tMessage[1]) and tonumber(tMessage[2]) and tonumber(tMessage[3]) then
 					local tFix = { vPosition = vector.new( tMessage[1], tMessage[2], tMessage[3] ), nDistance = nDistance }
@@ -111,21 +111,23 @@ function gps.locate( _nTimeout, _bDebug )
 					if tFix.nDistance == 0 then
 							pos1, pos2 = tFix.vPosition, nil
 					else
-												table.insert( tFixes, tFix )
-												if #tFixes >= 3 then
-														if not pos1 then
-																pos1, pos2 = trilaterate( tFixes[1], tFixes[2], tFixes[#tFixes] )
-														else
-																pos1, pos2 = narrow( pos1, pos2, tFixes[#tFixes] )
-														end
-												end
-										end
+						table.insert( tFixes, tFix )
+						if #tFixes >= 3 then
+							if not pos1 then
+								pos1, pos2 = trilaterate( tFixes[1], tFixes[2], tFixes[#tFixes] )
+							else
+								pos1, pos2 = narrow( pos1, pos2, tFixes[#tFixes] )
+							end
+						end
+					end
 					if pos1 and not pos2 then
 						break
 					end
 				end
 			end
-		end 
+		elseif e == nil then
+			break
+		end
 	end
 	
 	-- Close the channel, if we opened one
